@@ -328,6 +328,8 @@ void RoctracerLogger::api_callback(
               dis->debugState_.activityCallbackRows.load();
           event.stopPhaseRowsAtApiExit =
               dis->debugState_.stopPhaseCallbackRows.load();
+          event.graphFlushCountAtApiExit =
+              dis->graphLaunchTriggeredFlushes_.load();
           dis->recentGraphLaunches_.push_back(event);
           while (
               dis->recentGraphLaunches_.size() >
@@ -347,6 +349,12 @@ void RoctracerLogger::api_callback(
                   << ", flush_state={reported="
                   << s_flush.maxCorrelationId_.load() << ", completed="
                   << s_flush.maxCompletedCorrelationId_ << "}";
+        const auto flushCount =
+            dis->graphLaunchTriggeredFlushes_.fetch_add(1) + 1;
+        LOG_FIRST_N(INFO, 20)
+            << "Flushing ROCtracer activities after hipGraphLaunch: flush_count="
+            << flushCount << ", correlation=" << data->correlation_id;
+        dis->flushActivities();
       }
 
       // External correlation
@@ -543,6 +551,7 @@ void RoctracerLogger::startLogging() {
     graphLaunchSequence_ = 0;
   }
   trackedGraphLaunches_.store(0);
+  graphLaunchTriggeredFlushes_.store(0);
   if (!hipGraphLaunchOpIdInitialized_ ||
       hipGraphLaunchOpId_ == std::numeric_limits<uint32_t>::max()) {
     uint32_t graphLaunchCid = 0;
@@ -847,6 +856,7 @@ void RoctracerLogger::stopLogging() {
             << ", stabilization_timed_out=" << stabilizationTimedOut
             << ", stabilization_polls=" << stabilizationPolls
             << ", stable_polls=" << stableFlushPolls << "}"
+            << ", graph_flushes=" << graphLaunchTriggeredFlushes_.load()
             << ", callback_stats={total_batches="
             << debugState_.activityCallbackBatches.load()
             << ", total_rows=" << debugState_.activityCallbackRows.load()
@@ -869,6 +879,8 @@ void RoctracerLogger::stopLogging() {
                 << "]"
                 << ", rows_buffered_at_api_exit="
                 << event.rowsBufferedAtApiExit
+                << ", graph_flush_count_at_api_exit="
+                << event.graphFlushCountAtApiExit
                 << ", callback_snapshot={batches="
                 << event.activityBatchesAtApiExit << ", rows="
                 << event.activityRowsAtApiExit << ", stop_rows="

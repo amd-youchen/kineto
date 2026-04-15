@@ -290,6 +290,7 @@ class RoctracerLogger {
     uint64_t lastCorrelationCoverBatchIndex = 0;
     uint64_t lastCorrelationCoverMinId = 0;
     uint64_t lastCorrelationCoverMaxId = 0;
+    uint64_t graphFlushCountAtApiExit = 0;
   };
 
   static constexpr size_t kGraphLaunchDebugHistory = 8;
@@ -352,6 +353,7 @@ class RoctracerLogger {
   std::mutex graphLaunchDebugMutex_;
   std::deque<GraphLaunchDebugEvent> recentGraphLaunches_;
   std::atomic<uint64_t> trackedGraphLaunches_{0};
+  std::atomic<uint64_t> graphLaunchTriggeredFlushes_{0};
   uint64_t graphLaunchSequence_{0};
   uint32_t hipGraphLaunchOpId_{std::numeric_limits<uint32_t>::max()};
   bool hipGraphLaunchOpIdInitialized_{false};
