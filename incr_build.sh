@@ -1,6 +1,10 @@
 #!/bin/bash
-
+export BUILD_ENVIRONMENT=local-rocm-gfx942-wheel
+export INSTALL_WHEEL=0
+export PYTORCH_ROCM_ARCH=gfx942
 set -ex -o pipefail
+pip uninstall -y torch
+rm -rf dist/
 
 # Incremental wheel rebuild for local libkineto development.
 #
