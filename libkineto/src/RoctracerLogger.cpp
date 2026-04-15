@@ -349,12 +349,6 @@ void RoctracerLogger::api_callback(
                   << ", flush_state={reported="
                   << s_flush.maxCorrelationId_.load() << ", completed="
                   << s_flush.maxCompletedCorrelationId_ << "}";
-        const auto flushCount =
-            dis->graphLaunchTriggeredFlushes_.fetch_add(1) + 1;
-        LOG_FIRST_N(INFO, 20)
-            << "Flushing ROCtracer activities after hipGraphLaunch: flush_count="
-            << flushCount << ", correlation=" << data->correlation_id;
-        dis->flushActivities();
       }
 
       // External correlation
@@ -632,7 +626,7 @@ void RoctracerLogger::startLogging() {
     // Enable async op collection
     roctracer_properties_t hcc_cb_properties;
     memset(&hcc_cb_properties, 0, sizeof(roctracer_properties_t));
-    hcc_cb_properties.buffer_size = 0x4000;
+    hcc_cb_properties.buffer_size = 0x1000;
     hcc_cb_properties.buffer_callback_fun = activity_callback;
     roctracer_open_pool_expl(&hcc_cb_properties, &hccPool_);
     roctracer_enable_domain_activity_expl(ACTIVITY_DOMAIN_HCC_OPS, hccPool_);

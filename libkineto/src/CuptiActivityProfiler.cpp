@@ -1421,14 +1421,7 @@ const time_point<system_clock> CuptiActivityProfiler::performRunLoopStep(
       collection_done = derivedConfig_->isCollectionDone(now, currentIter);
 
 #ifdef HAS_ROCTRACER
-      if (!cpuOnly_ && !collection_done && !cupti_.stopCollection) {
-        cupti_.flushActivities();
-        roctracerDiagnostics_.collect_phase_flushes++;
-        LOG_FIRST_N(INFO, 20)
-            << "Flushing ROCtracer activities during collect phase: flush_count="
-            << roctracerDiagnostics_.collect_phase_flushes
-            << ", currentIter=" << currentIter;
-      }
+      (void)currentIter;
 #endif
 
       if (collection_done
