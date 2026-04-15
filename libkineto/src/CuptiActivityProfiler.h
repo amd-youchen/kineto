@@ -558,6 +558,24 @@ class CuptiActivityProfiler {
 
   friend std::ostream& operator<<(std::ostream& oss, const ErrorCounts& ecs);
 
+#ifdef HAS_ROCTRACER
+  struct RoctracerDiagnostics {
+    int32_t warmup_activity_clears = 0;
+    int32_t reset_activity_clears = 0;
+    int32_t total_records_seen = 0;
+    int32_t default_records_seen = 0;
+    int32_t kernel_records_seen = 0;
+    int32_t copy_records_seen = 0;
+    int32_t malloc_records_seen = 0;
+    int32_t async_records_seen = 0;
+    int32_t unexpected_records_seen = 0;
+    int32_t runtime_records_out_of_range = 0;
+    int32_t gpu_records_out_of_range = 0;
+    int32_t runtime_records_marked_present = 0;
+    int32_t gpu_records_marked_present = 0;
+  };
+#endif
+
   // This set tracks the (device, cuda streams) observed in the trace
   // doing CUDA kernels/memcopies. This prevents emitting CUDA sync
   // events on streams with no activity.
@@ -582,6 +600,9 @@ class CuptiActivityProfiler {
   uint32_t resourceOverheadCount_;
 
   ErrorCounts ecs_;
+#ifdef HAS_ROCTRACER
+  RoctracerDiagnostics roctracerDiagnostics_;
+#endif
 
   // LoggerCollector to collect all LOGs during the trace
 #if !USE_GOOGLE_LOG

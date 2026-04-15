@@ -92,6 +92,16 @@ std::unordered_map<uint32_t, uint32_t>& ctxToDeviceId() {
   return ctxToDeviceId_;
 }
 
+std::string formatActivityTypes(
+    const std::set<libkineto::ActivityType>& activities) {
+  std::vector<std::string> activityNames;
+  activityNames.reserve(activities.size());
+  for (const auto activity : activities) {
+    activityNames.emplace_back(libkineto::toString(activity));
+  }
+  return fmt::format("[{}]", fmt::join(activityNames, ", "));
+}
+
 } // namespace
 
 namespace KINETO_NAMESPACE {
@@ -368,7 +378,14 @@ void CuptiActivityProfiler::processTraceInternal(ActivityLogger& logger) {
 #endif // HAS_CUPTI
 #ifdef HAS_ROCTRACER
   if (!cpuOnly_) {
-    VLOG(0) << "Retrieving GPU activity buffers";
+    LOG(INFO) << "ROCtracer GPU processing: cpuOnly=" << cpuOnly_
+              << ", gpu_path_active=true, selected_activities="
+              << formatActivityTypes(derivedConfig_->profileActivityTypes())
+              << ", capture_window=[" << captureWindowStartTime_ << ", "
+              << captureWindowEndTime_ << "]"
+              << ", warmup_activity_clears="
+              << roctracerDiagnostics_.warmup_activity_clears
+              << ", gpuActivityPresent(before)=" << gpuActivityPresent();
     const int count = cupti_.processActivities(
         std::bind(
             &CuptiActivityProfiler::handleRoctracerActivity,
@@ -382,6 +399,23 @@ void CuptiActivityProfiler::processTraceInternal(ActivityLogger& logger) {
             std::placeholders::_2,
             std::placeholders::_3));
     LOG(INFO) << "Processed " << count << " GPU records";
+    LOG(INFO) << "ROCtracer handler summary: seen_by_type={total="
+              << roctracerDiagnostics_.total_records_seen
+              << ", default=" << roctracerDiagnostics_.default_records_seen
+              << ", kernel=" << roctracerDiagnostics_.kernel_records_seen
+              << ", copy=" << roctracerDiagnostics_.copy_records_seen
+              << ", malloc=" << roctracerDiagnostics_.malloc_records_seen
+              << ", async=" << roctracerDiagnostics_.async_records_seen
+              << ", unexpected="
+              << roctracerDiagnostics_.unexpected_records_seen
+              << "}, out_of_range={runtime="
+              << roctracerDiagnostics_.runtime_records_out_of_range
+              << ", gpu=" << roctracerDiagnostics_.gpu_records_out_of_range
+              << "}, marked_gpu_present={runtime="
+              << roctracerDiagnostics_.runtime_records_marked_present
+              << ", gpu=" << roctracerDiagnostics_.gpu_records_marked_present
+              << "}, gpuActivityPresent(after)=" << gpuActivityPresent()
+              << ", ecs=" << ecs_;
     LOGGER_OBSERVER_ADD_EVENT_COUNT(count);
   }
 #endif // HAS_ROCTRACER
@@ -829,6 +863,13 @@ inline void CuptiActivityProfiler::handleGpuActivity(
     const ITraceActivity& act,
     ActivityLogger* logger) {
   if (outOfRange(act)) {
+#ifdef HAS_ROCTRACER
+    roctracerDiagnostics_.gpu_records_out_of_range++;
+    LOG_FIRST_N(INFO, 10)
+        << "Dropping ROCtracer GPU activity outside capture window: corr_id="
+        << act.correlationId() << ", name=" << act.name()
+        << ", ts=" << act.timestamp() << ", dur=" << act.duration();
+#endif
     return;
   }
   checkTimestampOrder(&act);
@@ -837,6 +878,9 @@ inline void CuptiActivityProfiler::handleGpuActivity(
   seenDeviceStreams_.insert({act.deviceId(), act.resourceId()});
 
   act.log(*logger);
+#ifdef HAS_ROCTRACER
+  roctracerDiagnostics_.gpu_records_marked_present++;
+#endif
   setGpuActivityPresent(true);
   updateGpuNetSpan(act);
   if (derivedConfig_->profileActivityTypes().count(
@@ -951,9 +995,16 @@ void CuptiActivityProfiler::handleRuntimeActivity(
       traceBuffers_->addActivityWrapper(RuntimeActivity<T>(activity, linked));
   checkTimestampOrder(&runtime_activity);
   if (outOfRange(runtime_activity)) {
+    roctracerDiagnostics_.runtime_records_out_of_range++;
+    LOG_FIRST_N(INFO, 10)
+        << "Dropping ROCtracer runtime activity outside capture window: id="
+        << activity->id << ", name=" << runtime_activity.name()
+        << ", ts=" << runtime_activity.timestamp()
+        << ", dur=" << runtime_activity.duration();
     return;
   }
   runtime_activity.log(*logger);
+  roctracerDiagnostics_.runtime_records_marked_present++;
   setGpuActivityPresent(true);
 }
 
@@ -969,29 +1020,36 @@ inline void CuptiActivityProfiler::handleGpuActivity(
 void CuptiActivityProfiler::handleRoctracerActivity(
     const roctracerBase* record,
     ActivityLogger* logger) {
+  roctracerDiagnostics_.total_records_seen++;
   switch (record->type) {
     case ROCTRACER_ACTIVITY_DEFAULT:
+      roctracerDiagnostics_.default_records_seen++;
       handleRuntimeActivity(
           reinterpret_cast<const roctracerRow*>(record), logger);
       break;
     case ROCTRACER_ACTIVITY_KERNEL:
+      roctracerDiagnostics_.kernel_records_seen++;
       handleRuntimeActivity(
           reinterpret_cast<const roctracerKernelRow*>(record), logger);
       break;
     case ROCTRACER_ACTIVITY_COPY:
+      roctracerDiagnostics_.copy_records_seen++;
       handleRuntimeActivity(
           reinterpret_cast<const roctracerCopyRow*>(record), logger);
       break;
     case ROCTRACER_ACTIVITY_MALLOC:
+      roctracerDiagnostics_.malloc_records_seen++;
       handleRuntimeActivity(
           reinterpret_cast<const roctracerMallocRow*>(record), logger);
       break;
     case ROCTRACER_ACTIVITY_ASYNC:
+      roctracerDiagnostics_.async_records_seen++;
       handleGpuActivity(
           reinterpret_cast<const roctracerAsyncRow*>(record), logger);
       break;
     case ROCTRACER_ACTIVITY_NONE:
     default:
+      roctracerDiagnostics_.unexpected_records_seen++;
       LOG(WARNING) << "Unexpected activity type: " << record->type;
       ecs_.unexepected_cuda_events++;
       break;
@@ -1115,6 +1173,10 @@ void CuptiActivityProfiler::configure(
     cupti_.enableCuptiActivities(
         config_->selectedActivityTypes(), config_->perThreadBufferEnabled());
 #else // HAS_ROCTRACER
+    LOG(INFO) << "ROCtracer tracing config: cpuOnly=" << cpuOnly_
+              << ", maxEvents=" << config_->maxEvents()
+              << ", selected_activities="
+              << formatActivityTypes(config_->selectedActivityTypes());
     cupti_.setMaxEvents(config_->maxEvents());
     cupti_.enableActivities(config_->selectedActivityTypes());
 #endif
@@ -1301,6 +1363,15 @@ const time_point<system_clock> CuptiActivityProfiler::performRunLoopStep(
       if (!cpuOnly_ && currentIter < 0 &&
           (derivedConfig_->isProfilingByIteration() ||
            nextWakeupTime < derivedConfig_->profileStartTime())) {
+#ifdef HAS_ROCTRACER
+        roctracerDiagnostics_.warmup_activity_clears++;
+        LOG_FIRST_N(INFO, 10)
+            << "Clearing ROCtracer activities during warmup: clear_count="
+            << roctracerDiagnostics_.warmup_activity_clears
+            << ", currentIter=" << currentIter
+            << ", nextWakeupTimeBeforeStart="
+            << (nextWakeupTime < derivedConfig_->profileStartTime());
+#endif
         cupti_.clearActivities();
       }
 
@@ -1610,6 +1681,17 @@ void CuptiActivityProfiler::popUserCorrelationId() {
 void CuptiActivityProfiler::resetTraceData() {
 #if defined(HAS_CUPTI) || defined(HAS_ROCTRACER)
   if (!cpuOnly_) {
+#ifdef HAS_ROCTRACER
+    roctracerDiagnostics_.reset_activity_clears++;
+    LOG(INFO) << "Clearing ROCtracer activities during reset: clear_count="
+              << roctracerDiagnostics_.reset_activity_clears
+              << ", total_records_seen="
+              << roctracerDiagnostics_.total_records_seen
+              << ", marked_gpu_present={runtime="
+              << roctracerDiagnostics_.runtime_records_marked_present
+              << ", gpu=" << roctracerDiagnostics_.gpu_records_marked_present
+              << "}";
+#endif
     cupti_.clearActivities();
     cupti_.teardownContext();
 #ifdef HAS_CUPTI
@@ -1630,6 +1712,9 @@ void CuptiActivityProfiler::resetTraceData() {
   sessions_.clear();
   resourceOverheadCount_ = 0;
   ecs_ = ErrorCounts{};
+#ifdef HAS_ROCTRACER
+  roctracerDiagnostics_ = RoctracerDiagnostics{};
+#endif
 #if !USE_GOOGLE_LOG
   Logger::removeLoggerObserver(loggerCollectorMetadata_.get());
 #endif // !USE_GOOGLE_LOG

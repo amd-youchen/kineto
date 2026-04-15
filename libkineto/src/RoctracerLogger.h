@@ -12,6 +12,7 @@
 #include <deque>
 #include <functional>
 #include <list>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -270,6 +271,54 @@ class RoctracerLogger {
   void setMaxEvents(uint32_t maxBufferSize);
 
  private:
+  struct GraphLaunchDebugEvent {
+    uint64_t sequence = 0;
+    uint64_t correlationId = 0;
+    uint64_t apiBegin = 0;
+    uint64_t apiEnd = 0;
+    size_t rowsBufferedAtApiExit = 0;
+    uint64_t activityBatchesAtApiExit = 0;
+    uint64_t activityRowsAtApiExit = 0;
+    uint64_t stopPhaseRowsAtApiExit = 0;
+    uint64_t asyncBatchesAfterApi = 0;
+    uint64_t asyncRowsAfterApi = 0;
+    uint64_t stopPhaseBatchesAfterApi = 0;
+    uint64_t stopPhaseRowsAfterApi = 0;
+    uint64_t correlationCoverBatches = 0;
+    uint64_t correlationCoverRows = 0;
+    uint64_t lastCorrelationCoverBatchIndex = 0;
+    uint64_t lastCorrelationCoverMinId = 0;
+    uint64_t lastCorrelationCoverMaxId = 0;
+  };
+
+  static constexpr size_t kGraphLaunchDebugHistory = 8;
+
+  struct DebugState {
+    std::atomic<uint64_t> clearLogsCalls{0};
+    std::atomic<uint64_t> activityCallbackBatches{0};
+    std::atomic<uint64_t> activityCallbackRows{0};
+    std::atomic<uint64_t> stopPhaseCallbackBatches{0};
+    std::atomic<uint64_t> stopPhaseCallbackRows{0};
+    std::atomic<uint64_t> postStopCallbackBatches{0};
+    std::atomic<uint64_t> postStopCallbackRows{0};
+    std::atomic<uint64_t> droppedRowsByBufferLimit{0};
+    std::atomic<bool> stopRequested{false};
+    std::atomic<bool> roctracerStopIssued{false};
+
+    void resetForNewRun() {
+      clearLogsCalls.store(0);
+      activityCallbackBatches.store(0);
+      activityCallbackRows.store(0);
+      stopPhaseCallbackBatches.store(0);
+      stopPhaseCallbackRows.store(0);
+      postStopCallbackBatches.store(0);
+      postStopCallbackRows.store(0);
+      droppedRowsByBufferLimit.store(0);
+      stopRequested.store(false);
+      roctracerStopIssued.store(false);
+    }
+  };
+
   bool registered_{false};
   void endTracing();
 
@@ -298,6 +347,13 @@ class RoctracerLogger {
 
   bool externalCorrelationEnabled_{true};
   bool logging_{false};
+  DebugState debugState_;
+  std::mutex graphLaunchDebugMutex_;
+  std::deque<GraphLaunchDebugEvent> recentGraphLaunches_;
+  std::atomic<uint64_t> trackedGraphLaunches_{0};
+  uint64_t graphLaunchSequence_{0};
+  uint32_t hipGraphLaunchOpId_{std::numeric_limits<uint32_t>::max()};
+  bool hipGraphLaunchOpIdInitialized_{false};
 
   friend class onnxruntime::profiling::RocmProfiler;
   friend class libkineto::RoctracerActivityApi;

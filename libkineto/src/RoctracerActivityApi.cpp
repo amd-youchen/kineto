@@ -92,6 +92,7 @@ int RoctracerActivityApi::processActivities(
   // This will break time-ordering of events but is status quo.
 
   int count = 0;
+  size_t externalCorrelationCount = 0;
 
   // Process all external correlations pairs
   for (int it = RoctracerLogger::CorrelationDomain::begin;
@@ -103,6 +104,7 @@ int RoctracerActivityApi::processActivities(
           item.first,
           item.second,
           static_cast<RoctracerLogger::CorrelationDomain>(it));
+      ++externalCorrelationCount;
     }
     std::lock_guard<std::mutex> lock(d->externalCorrelationsMutex_);
     externalCorrelations.clear();
@@ -114,37 +116,58 @@ int RoctracerActivityApi::processActivities(
   // The time_converter is not available at collection time.  Or we could do a
   // much better job.
   auto toffset = getTimeOffset();
+  const size_t totalRows = d->rows_.size();
+  size_t asyncRows = 0;
+  size_t runtimeRows = 0;
+  int filteredRuntimeMask = 0;
+  int filteredMemcpyMask = 0;
+  int filteredMemsetMask = 0;
+  int filteredKernelMask = 0;
+  int filteredBarrier = 0;
 
   // All Runtime API Calls
   for (auto& item : d->rows_) {
+    if (item->type == ROCTRACER_ACTIVITY_ASYNC) {
+      ++asyncRows;
+    } else {
+      ++runtimeRows;
+    }
+
     bool filtered = false;
     if (item->type != ROCTRACER_ACTIVITY_ASYNC &&
         !isLogged(ActivityType::CUDA_RUNTIME)) {
       filtered = true;
+      ++filteredRuntimeMask;
     } else {
-      switch (reinterpret_cast<roctracerAsyncRow*>(item)->kind) {
+      auto* asyncRow = reinterpret_cast<roctracerAsyncRow*>(item);
+      switch (asyncRow->kind) {
         case HIP_OP_COPY_KIND_DEVICE_TO_HOST_:
         case HIP_OP_COPY_KIND_HOST_TO_DEVICE_:
         case HIP_OP_COPY_KIND_DEVICE_TO_DEVICE_:
         case HIP_OP_COPY_KIND_DEVICE_TO_HOST_2D_:
         case HIP_OP_COPY_KIND_HOST_TO_DEVICE_2D_:
         case HIP_OP_COPY_KIND_DEVICE_TO_DEVICE_2D_:
-          if (!isLogged(ActivityType::GPU_MEMCPY))
+          if (!isLogged(ActivityType::GPU_MEMCPY)) {
             filtered = true;
+            ++filteredMemcpyMask;
+          }
           break;
         case HIP_OP_COPY_KIND_FILL_BUFFER_:
-          if (!isLogged(ActivityType::GPU_MEMSET))
+          if (!isLogged(ActivityType::GPU_MEMSET)) {
             filtered = true;
+            ++filteredMemsetMask;
+          }
           break;
         case HIP_OP_DISPATCH_KIND_KERNEL_:
         case HIP_OP_DISPATCH_KIND_TASK_:
         default:
-          if (!isLogged(ActivityType::CONCURRENT_KERNEL))
+          if (asyncRow->op == HIP_OP_ID_BARRIER) {
             filtered = true;
-          // Don't record barriers/markers
-          if (reinterpret_cast<roctracerAsyncRow*>(item)->op ==
-              HIP_OP_ID_BARRIER)
+            ++filteredBarrier;
+          } else if (!isLogged(ActivityType::CONCURRENT_KERNEL)) {
             filtered = true;
+            ++filteredKernelMask;
+          }
           break;
       }
     }
@@ -165,6 +188,18 @@ int RoctracerActivityApi::processActivities(
       ++count;
     }
   }
+  const int filteredCount = filteredRuntimeMask + filteredMemcpyMask +
+      filteredMemsetMask + filteredKernelMask + filteredBarrier;
+  LOG(INFO) << "ROCtracer activity rows: total=" << totalRows
+            << ", async=" << asyncRows << ", runtime=" << runtimeRows
+            << ", external_correlations=" << externalCorrelationCount
+            << ", filtered=" << filteredCount
+            << " (runtime_mask=" << filteredRuntimeMask
+            << ", memcpy_mask=" << filteredMemcpyMask
+            << ", memset_mask=" << filteredMemsetMask
+            << ", kernel_mask=" << filteredKernelMask
+            << ", barrier=" << filteredBarrier << ")"
+            << ", counted=" << count;
   return count;
 }
 

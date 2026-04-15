@@ -191,7 +191,7 @@ if (CUDA_nvperf_host_LIBRARY)
 endif()
 if (NOT LIBKINETO_NOROCTRACER)
     target_compile_options(kineto_base PRIVATE "-DHAS_ROCTRACER")
-    target_compile_options(kineto_base PRIVATE "-D__HIP_PLATFORM_HCC__")
+    target_compile_options(kineto_base PRIVATE "-D__HIP_PLATFORM_AMD__")
     target_compile_options(kineto_base PRIVATE "-D__HIP_PLATFORM_AMD__")
 endif()
 
