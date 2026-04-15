@@ -207,6 +207,10 @@ void RoctracerActivityApi::clearActivities() {
   d->clearLogs();
 }
 
+void RoctracerActivityApi::flushActivities() {
+  d->flushActivities();
+}
+
 void RoctracerActivityApi::setMaxEvents(uint32_t maxEvents) {
 #ifdef HAS_ROCTRACER
   d->setMaxEvents(maxEvents);

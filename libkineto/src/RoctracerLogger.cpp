@@ -110,6 +110,12 @@ void RoctracerLogger::clearLogs() {
             << debugState_.postStopCallbackRows.load() << "}";
 }
 
+void RoctracerLogger::flushActivities() {
+  if (hccPool_ != nullptr) {
+    roctracer_flush_activity_expl(hccPool_);
+  }
+}
+
 void RoctracerLogger::insert_row_to_buffer(roctracerBase* row) {
   RoctracerLogger* dis = &singleton();
   std::lock_guard<std::mutex> lock(dis->rowsMutex_);

@@ -562,6 +562,7 @@ class CuptiActivityProfiler {
   struct RoctracerDiagnostics {
     int32_t warmup_activity_clears = 0;
     int32_t reset_activity_clears = 0;
+    int32_t collect_phase_flushes = 0;
     int32_t total_records_seen = 0;
     int32_t default_records_seen = 0;
     int32_t kernel_records_seen = 0;
@@ -602,6 +603,8 @@ class CuptiActivityProfiler {
   ErrorCounts ecs_;
 #ifdef HAS_ROCTRACER
   RoctracerDiagnostics roctracerDiagnostics_;
+  std::chrono::time_point<std::chrono::system_clock>
+      lastRoctracerCollectFlushTime_{};
 #endif
 
   // LoggerCollector to collect all LOGs during the trace

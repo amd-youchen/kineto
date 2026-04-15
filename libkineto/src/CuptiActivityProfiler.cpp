@@ -385,6 +385,8 @@ void CuptiActivityProfiler::processTraceInternal(ActivityLogger& logger) {
               << captureWindowEndTime_ << "]"
               << ", warmup_activity_clears="
               << roctracerDiagnostics_.warmup_activity_clears
+              << ", collect_phase_flushes="
+              << roctracerDiagnostics_.collect_phase_flushes
               << ", gpuActivityPresent(before)=" << gpuActivityPresent();
     const int count = cupti_.processActivities(
         std::bind(
@@ -1286,6 +1288,9 @@ void CuptiActivityProfiler::toggleCollectionDynamic(const bool enable) {
 void CuptiActivityProfiler::startTraceInternal(
     const time_point<system_clock>& now) {
   captureWindowStartTime_ = libkineto::timeSinceEpoch(now);
+#ifdef HAS_ROCTRACER
+  lastRoctracerCollectFlushTime_ = now;
+#endif
   VLOG(0) << "Warmup -> CollectTrace";
   for (auto& session : sessions_) {
     LOG(INFO) << "Starting child profiler session";
@@ -1417,6 +1422,19 @@ const time_point<system_clock> CuptiActivityProfiler::performRunLoopStep(
     case RunloopState::CollectTrace:
       VLOG(1) << "State: CollectTrace";
       collection_done = derivedConfig_->isCollectionDone(now, currentIter);
+
+#ifdef HAS_ROCTRACER
+      if (!cpuOnly_ && !collection_done && !cupti_.stopCollection) {
+        constexpr auto kRoctracerCollectFlushInterval = milliseconds(10);
+        if (lastRoctracerCollectFlushTime_ == time_point<system_clock>{} ||
+            (now - lastRoctracerCollectFlushTime_) >=
+                kRoctracerCollectFlushInterval) {
+          cupti_.flushActivities();
+          lastRoctracerCollectFlushTime_ = now;
+          roctracerDiagnostics_.collect_phase_flushes++;
+        }
+      }
+#endif
 
       if (collection_done
 #if defined(HAS_CUPTI) || defined(HAS_ROCTRACER)
@@ -1685,6 +1703,8 @@ void CuptiActivityProfiler::resetTraceData() {
     roctracerDiagnostics_.reset_activity_clears++;
     LOG(INFO) << "Clearing ROCtracer activities during reset: clear_count="
               << roctracerDiagnostics_.reset_activity_clears
+              << ", collect_phase_flushes="
+              << roctracerDiagnostics_.collect_phase_flushes
               << ", total_records_seen="
               << roctracerDiagnostics_.total_records_seen
               << ", marked_gpu_present={runtime="
@@ -1714,6 +1734,7 @@ void CuptiActivityProfiler::resetTraceData() {
   ecs_ = ErrorCounts{};
 #ifdef HAS_ROCTRACER
   roctracerDiagnostics_ = RoctracerDiagnostics{};
+  lastRoctracerCollectFlushTime_ = time_point<system_clock>{};
 #endif
 #if !USE_GOOGLE_LOG
   Logger::removeLoggerObserver(loggerCollectorMetadata_.get());
