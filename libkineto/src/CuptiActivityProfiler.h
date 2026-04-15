@@ -603,8 +603,6 @@ class CuptiActivityProfiler {
   ErrorCounts ecs_;
 #ifdef HAS_ROCTRACER
   RoctracerDiagnostics roctracerDiagnostics_;
-  std::chrono::time_point<std::chrono::system_clock>
-      lastRoctracerCollectFlushTime_{};
 #endif
 
   // LoggerCollector to collect all LOGs during the trace
