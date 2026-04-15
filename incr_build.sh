@@ -28,6 +28,7 @@ BUILD_DIR="build"
 KINETO_TARGET="${KINETO_TARGET:-kineto}"
 INSTALL_WHEEL="${INSTALL_WHEEL:-1}"
 ENSURE_CI_NUMPY="${ENSURE_CI_NUMPY:-1}"
+UNIQUE_BUILD_METADATA="${UNIQUE_BUILD_METADATA:-1}"
 
 if [[ -z "${BUILD_ENVIRONMENT:-}" ]]; then
   fatal "BUILD_ENVIRONMENT must be set"
@@ -69,6 +70,22 @@ if ! grep -Eq '^USE_KINETO:(BOOL|STRING)=ON$' "${BUILD_DIR}/CMakeCache.txt"; the
   fatal "The existing build cache was configured with USE_KINETO=OFF"
 fi
 
+if [[ "${UNIQUE_BUILD_METADATA}" == "1" ]]; then
+  full_sha="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+  short_sha="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+  build_stamp="${KINETO_LOCAL_BUILD_ID:-$(date -u +%Y%m%d%H%M%S)}"
+  base_version="$(tr -d '\n' < version.txt)"
+
+  if [[ -z "${PYTORCH_BUILD_VERSION:-}" ]]; then
+    export PYTORCH_BUILD_VERSION="${base_version}+kineto.${short_sha}.${build_stamp}"
+    export PYTORCH_BUILD_NUMBER=1
+  fi
+
+  if [[ -z "${PYTORCH_BUILD_GIT_VERSION:-}" ]]; then
+    export PYTORCH_BUILD_GIT_VERSION="${full_sha}.kineto.${build_stamp}"
+  fi
+fi
+
 echo "Python version:"
 python --version
 
@@ -77,6 +94,13 @@ gcc --version || true
 
 echo "CMake version:"
 cmake --version
+
+if [[ -n "${PYTORCH_BUILD_VERSION:-}" ]]; then
+  echo "Wheel version: ${PYTORCH_BUILD_VERSION}"
+fi
+if [[ -n "${PYTORCH_BUILD_GIT_VERSION:-}" ]]; then
+  echo "Wheel git_version: ${PYTORCH_BUILD_GIT_VERSION}"
+fi
 
 # Keep the cache reusable and avoid accidental full reconfigure requests
 # from the shell environment.
@@ -128,6 +152,11 @@ fi
 
 if [[ "${INSTALL_WHEEL}" == "1" ]]; then
   pip_install_whl "${wheels[@]}"
+  python - <<'PY'
+import torch
+print(f"Installed torch.__version__={torch.__version__}")
+print(f"Installed torch.version.git_version={torch.version.git_version}")
+PY
 fi
 
 mkdir -p dist
@@ -136,4 +165,3 @@ if [[ -f "${BUILD_DIR}/.ninja_log" ]]; then
 fi
 
 print_sccache_stats
-
