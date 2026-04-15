@@ -164,4 +164,4 @@ if [[ -f "${BUILD_DIR}/.ninja_log" ]]; then
   cp "${BUILD_DIR}/.ninja_log" dist
 fi
 
-print_sccache_stats
+#print_sccache_stats
